@@ -81,7 +81,7 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.fetch-versions.outputs.full_matrix) }}
       fail-fast: false
-      max-parallel: 8  # Reduced to avoid rate limiting
+      max-parallel: 90  # Reduced to avoid rate limiting
     steps:
       - name: Create directory for SBOMs
         run: mkdir -p sboms
