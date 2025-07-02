@@ -68,33 +68,5 @@
       "groupId": "org.apache.maven.archetype",
       "artifactId": "maven-archetype",
       "projectName": "maven-archetype"
-    },
-    {
-      "name": "maven-archetypes",
-      "url": "https://github.com/apache/maven-archetypes.git",
-      "groupId": "org.apache.maven.archetypes",
-      "artifactId": "maven-archetypes",
-      "projectName": "maven-archetypes"
-    },
-    {
-      "name": "maven-dist-tool",
-      "url": "https://github.com/apache/maven-dist-tool.git",
-      "groupId": "org.apache.maven.tools",
-      "artifactId": "maven-dist-tool",
-      "projectName": "maven-dist-tool"
-    },
-    {
-      "name": "maven-enforcer",
-      "url": "https://github.com/apache/maven-enforcer.git",
-      "groupId": "org.apache.maven.plugins",
-      "artifactId": "maven-enforcer-plugin",
-      "projectName": "maven-enforcer"
-    },
-    {
-      "name": "maven-jxr",
-      "url": "https://github.com/apache/maven-jxr.git",
-      "groupId": "org.apache.maven.plugins",
-      "artifactId": "maven-jxr-plugin",
-      "projectName": "maven-jxr"
     }
 ]
