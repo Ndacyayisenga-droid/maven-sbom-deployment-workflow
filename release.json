@@ -26,5 +26,75 @@
       "groupId": "org.apache.maven.plugins",
       "artifactId": "maven-verifier-plugin",
       "projectName": "maven-verifier-plugin"
+    },
+    {
+      "name": "maven",
+      "url": "https://github.com/apache/maven.git",
+      "groupId": "org.apache.maven",
+      "artifactId": "maven",
+      "projectName": "maven"
+    },
+    {
+      "name": "maven-mvnd",
+      "url": "https://github.com/apache/maven-mvnd.git",
+      "groupId": "org.apache.maven.daemon",
+      "artifactId": "maven-mvnd",
+      "projectName": "maven-mvnd"
+    },
+    {
+      "name": "maven-resolver",
+      "url": "https://github.com/apache/maven-resolver.git",
+      "groupId": "org.apache.maven.resolver",
+      "artifactId": "maven-resolver",
+      "projectName": "maven-resolver"
+    },
+    {
+      "name": "maven-resolver-ant-tasks",
+      "url": "https://github.com/apache/maven-resolver-ant-tasks.git",
+      "groupId": "org.apache.maven.resolver",
+      "artifactId": "maven-resolver-ant-tasks",
+      "projectName": "maven-resolver-ant-tasks"
+    },
+    {
+      "name": "maven-wrapper",
+      "url": "https://github.com/apache/maven-wrapper.git",
+      "groupId": "org.apache.maven.wrapper",
+      "artifactId": "maven-wrapper",
+      "projectName": "maven-wrapper"
+    },
+    {
+      "name": "maven-archetype",
+      "url": "https://github.com/apache/maven-archetype.git",
+      "groupId": "org.apache.maven.archetype",
+      "artifactId": "maven-archetype",
+      "projectName": "maven-archetype"
+    },
+    {
+      "name": "maven-archetypes",
+      "url": "https://github.com/apache/maven-archetypes.git",
+      "groupId": "org.apache.maven.archetypes",
+      "artifactId": "maven-archetypes",
+      "projectName": "maven-archetypes"
+    },
+    {
+      "name": "maven-dist-tool",
+      "url": "https://github.com/apache/maven-dist-tool.git",
+      "groupId": "org.apache.maven.tools",
+      "artifactId": "maven-dist-tool",
+      "projectName": "maven-dist-tool"
+    },
+    {
+      "name": "maven-enforcer",
+      "url": "https://github.com/apache/maven-enforcer.git",
+      "groupId": "org.apache.maven.plugins",
+      "artifactId": "maven-enforcer-plugin",
+      "projectName": "maven-enforcer"
+    },
+    {
+      "name": "maven-jxr",
+      "url": "https://github.com/apache/maven-jxr.git",
+      "groupId": "org.apache.maven.plugins",
+      "artifactId": "maven-jxr-plugin",
+      "projectName": "maven-jxr"
     }
 ]
