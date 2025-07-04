@@ -40,6 +40,8 @@ jobs:
         run: mkdir -p sboms
 
       - name: Fetch versions and download/upload SBOMs
+        env:
+          DTRACK_API_KEY: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
         run: |
           name="${{ matrix.project.name }}"
           groupId="${{ matrix.project.groupId }}"
@@ -47,10 +49,10 @@ jobs:
           projectName="${{ matrix.project.projectName }}"
 
           groupPath=$(echo "$groupId" | tr '.' '/')
-          url="https://repo1.maven.org/maven2/$groupPath/$artifactId/maven-metadata.xml"
+          metadataUrl="https://repo1.maven.org/maven2/$groupPath/$artifactId/maven-metadata.xml"
 
           echo "Fetching versions for $artifactId"
-          versions=$(curl -s -f "$url" | xmllint --format - 2>/dev/null | \
+          versions=$(curl -s -f "$metadataUrl" | xmllint --format - 2>/dev/null | \
             grep '<version>' | sed -E 's/.*<version>([^<]+)<\/version>.*/\1/' | \
             grep -v SNAPSHOT || echo "")
 
@@ -61,18 +63,18 @@ jobs:
 
           for version in $versions; do
             echo "Processing $artifactId:$version"
-            JSON_SBOM_URL="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version/$artifactId-$version-cyclonedx.json"
-            XML_SBOM_URL="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version/$artifactId-$version-cyclonedx.xml"
+            JSON_URL="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version/$artifactId-$version-cyclonedx.json"
+            XML_URL="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version/$artifactId-$version-cyclonedx.xml"
 
-            JSON_SBOM_FILE="sboms/$artifactId-$version-cyclonedx.json"
-            XML_SBOM_FILE="sboms/$artifactId-$version-cyclonedx.xml"
+            JSON_FILE="sboms/$artifactId-$version-cyclonedx.json"
+            XML_FILE="sboms/$artifactId-$version-cyclonedx.xml"
             SBOM_FILE=""
             DOWNLOAD_SUCCESS=false
 
             for i in {1..3}; do
-              if curl -s -f -o "$JSON_SBOM_FILE" "$JSON_SBOM_URL"; then
+              if curl -s -f -o "$JSON_FILE" "$JSON_URL"; then
                 echo "Downloaded JSON SBOM for $artifactId:$version"
-                SBOM_FILE="$JSON_SBOM_FILE"
+                SBOM_FILE="$JSON_FILE"
                 DOWNLOAD_SUCCESS=true
                 break
               fi
@@ -81,9 +83,9 @@ jobs:
 
             if [ "$DOWNLOAD_SUCCESS" = false ]; then
               for i in {1..3}; do
-                if curl -s -f -o "$XML_SBOM_FILE" "$XML_SBOM_URL"; then
+                if curl -s -f -o "$XML_FILE" "$XML_URL"; then
                   echo "Downloaded XML SBOM for $artifactId:$version"
-                  SBOM_FILE="$XML_SBOM_FILE"
+                  SBOM_FILE="$XML_FILE"
                   DOWNLOAD_SUCCESS=true
                   break
                 fi
@@ -92,13 +94,13 @@ jobs:
             fi
 
             if [ "$DOWNLOAD_SUCCESS" = true ]; then
-              echo "Uploading SBOM $SBOM_FILE"
+              echo "Uploading SBOM $SBOM_FILE for $projectName:$version"
               curl -X PUT \
-                -H "X-Api-Key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}" \
-                -F "bom=@$SBOM_FILE" \
+                -H "X-Api-Key: $DTRACK_API_KEY" \
                 -F "projectName=$projectName" \
                 -F "projectVersion=$version" \
                 -F "autoCreate=true" \
+                -F "bom=@$SBOM_FILE" \
                 https://api.dependencytrack.open-elements.cloud/api/v1/bom
             else
               echo "No SBOM found for $artifactId:$version"
