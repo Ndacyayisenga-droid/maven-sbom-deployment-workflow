@@ -13,99 +13,94 @@ jobs:
   read-repos:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      projects: ${{ steps.set-matrix.outputs.projects }}
     steps:
-      - name: Checkout this repo
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Read release.json and convert to matrix
+      - name: Read release.json and split to project list
         id: set-matrix
         run: |
-          JSON=$(jq -c '{include: [.[]]}' release.json)
-          echo "matrix=$JSON" >> $GITHUB_OUTPUT
+          JSON=$(cat release.json | jq -c '[.[] | {name, groupId, artifactId, projectName}]')
+          echo "projects=$JSON" >> $GITHUB_OUTPUT
 
-  fetch-versions:
+  fetch-and-upload-sboms:
     needs: read-repos
     runs-on: ubuntu-latest
     strategy:
-      matrix: ${{ fromJson(needs.read-repos.outputs.matrix) }}
+      matrix:
+        project: ${{ fromJson(needs.read-repos.outputs.projects) }}
       fail-fast: false
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      max-parallel: 10
     steps:
-      - name: Install xmllint
-        run: sudo apt-get update && sudo apt-get install -y libxml2-utils
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libxml2-utils jq
 
-      - name: Fetch versions for project
-        id: set-matrix
+      - name: Prepare SBOM directory
+        run: mkdir -p sboms
+
+      - name: Fetch versions and download/upload SBOMs
         run: |
-          groupPath=$(echo "${{ matrix.groupId }}" | tr '.' '/')
-          artifactId=${{ matrix.artifactId }}
+          name="${{ matrix.project.name }}"
+          groupId="${{ matrix.project.groupId }}"
+          artifactId="${{ matrix.project.artifactId }}"
+          projectName="${{ matrix.project.projectName }}"
+
+          groupPath=$(echo "$groupId" | tr '.' '/')
           url="https://repo1.maven.org/maven2/$groupPath/$artifactId/maven-metadata.xml"
 
+          echo "Fetching versions for $artifactId"
           versions=$(curl -s -f "$url" | xmllint --format - 2>/dev/null | \
             grep '<version>' | sed -E 's/.*<version>([^<]+)<\/version>.*/\1/' | \
             grep -v SNAPSHOT || echo "")
 
-          matrix_json=$(echo "$versions" | jq -R -s -c '
-            split("\n") | map(select(length > 0)) |
-            map({
-              name: "${{ matrix.name }}",
-              groupId: "${{ matrix.groupId }}",
-              artifactId: "${{ matrix.artifactId }}",
-              projectName: "${{ matrix.projectName }}",
-              version: .
-            }) | { include: . }')
-
-          echo "matrix=$matrix_json" >> $GITHUB_OUTPUT
-
-  upload-sboms:
-    needs: fetch-versions
-    runs-on: ubuntu-latest
-    strategy:
-      matrix: ${{ fromJson(needs.fetch-versions.outputs.matrix) }}
-      fail-fast: false
-      max-parallel: 30
-    steps:
-      - name: Create SBOM directory
-        run: mkdir -p sboms
-
-      - name: Download SBOM
-        id: download-sbom
-        run: |
-          GROUP_PATH=$(echo "${{ matrix.groupId }}" | tr '.' '/')
-          ARTIFACT_ID=${{ matrix.artifactId }}
-          VERSION=${{ matrix.version }}
-          JSON_SBOM_URL="https://repo1.maven.org/maven2/$GROUP_PATH/$ARTIFACT_ID/$VERSION/$ARTIFACT_ID-$VERSION-cyclonedx.json"
-          XML_SBOM_URL="https://repo1.maven.org/maven2/$GROUP_PATH/$ARTIFACT_ID/$VERSION/$ARTIFACT_ID-$VERSION-cyclonedx.xml"
-
-          JSON_SBOM_FILE="sboms/$ARTIFACT_ID-$VERSION-cyclonedx.json"
-          XML_SBOM_FILE="sboms/$ARTIFACT_ID-$VERSION-cyclonedx.xml"
-          SBOM_FILE=""
-
-          if curl -s -f -o "$JSON_SBOM_FILE" "$JSON_SBOM_URL"; then
-            echo "Downloaded JSON SBOM"
-            SBOM_FILE="$JSON_SBOM_FILE"
-            echo "sbom_downloaded=true" >> $GITHUB_OUTPUT
-            echo "sbom_file=$SBOM_FILE" >> $GITHUB_OUTPUT
-          elif curl -s -f -o "$XML_SBOM_FILE" "$XML_SBOM_URL"; then
-            echo "Downloaded XML SBOM"
-            SBOM_FILE="$XML_SBOM_FILE"
-            echo "sbom_downloaded=true" >> $GITHUB_OUTPUT
-            echo "sbom_file=$SBOM_FILE" >> $GITHUB_OUTPUT
-          else
-            echo "No SBOM found"
-            echo "sbom_downloaded=false" >> $GITHUB_OUTPUT
+          if [ -z "$versions" ]; then
+            echo "No versions found for $artifactId"
+            exit 0
           fi
-        continue-on-error: true
 
-      - name: Upload SBOM to DependencyTrack
-        if: steps.download-sbom.outputs.sbom_downloaded == 'true'
-        uses: DependencyTrack/gh-upload-sbom@v3
-        with:
-          serverHostname: 'api.dependencytrack.open-elements.cloud'
-          apiKey: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
-          projectName: ${{ matrix.projectName }}
-          projectVersion: ${{ matrix.version }}
-          bomFilename: ${{ steps.download-sbom.outputs.sbom_file }}
-          autoCreate: true
+          for version in $versions; do
+            echo "Processing $artifactId:$version"
+            JSON_SBOM_URL="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version/$artifactId-$version-cyclonedx.json"
+            XML_SBOM_URL="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version/$artifactId-$version-cyclonedx.xml"
+
+            JSON_SBOM_FILE="sboms/$artifactId-$version-cyclonedx.json"
+            XML_SBOM_FILE="sboms/$artifactId-$version-cyclonedx.xml"
+            SBOM_FILE=""
+            DOWNLOAD_SUCCESS=false
+
+            for i in {1..3}; do
+              if curl -s -f -o "$JSON_SBOM_FILE" "$JSON_SBOM_URL"; then
+                echo "Downloaded JSON SBOM for $artifactId:$version"
+                SBOM_FILE="$JSON_SBOM_FILE"
+                DOWNLOAD_SUCCESS=true
+                break
+              fi
+              sleep 1
+            done
+
+            if [ "$DOWNLOAD_SUCCESS" = false ]; then
+              for i in {1..3}; do
+                if curl -s -f -o "$XML_SBOM_FILE" "$XML_SBOM_URL"; then
+                  echo "Downloaded XML SBOM for $artifactId:$version"
+                  SBOM_FILE="$XML_SBOM_FILE"
+                  DOWNLOAD_SUCCESS=true
+                  break
+                fi
+                sleep 1
+              done
+            fi
+
+            if [ "$DOWNLOAD_SUCCESS" = true ]; then
+              echo "Uploading SBOM $SBOM_FILE"
+              curl -X PUT \
+                -H "X-Api-Key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}" \
+                -F "bom=@$SBOM_FILE" \
+                -F "projectName=$projectName" \
+                -F "projectVersion=$version" \
+                -F "autoCreate=true" \
+                https://api.dependencytrack.open-elements.cloud/api/v1/bom
+            else
+              echo "No SBOM found for $artifactId:$version"
+            fi
+          done
