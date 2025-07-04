@@ -21,118 +21,82 @@ jobs:
       - name: Read release.json and convert to matrix
         id: set-matrix
         run: |
-          JSON=$(cat release.json | jq -c)
+          JSON=$(jq -c '{include: [.[]]}' release.json)
           echo "matrix=$JSON" >> $GITHUB_OUTPUT
 
   fetch-versions:
     needs: read-repos
     runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.read-repos.outputs.matrix) }}
+      fail-fast: false
     outputs:
-      full_matrix: ${{ steps.set-matrix.outputs.full_matrix }}
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - name: Install xmllint
         run: sudo apt-get update && sudo apt-get install -y libxml2-utils
 
-      - name: Generate full matrix with all versions
+      - name: Fetch versions for project
         id: set-matrix
         run: |
-          echo '[]' > matrix.json
-          repos='${{ needs.read-repos.outputs.matrix }}'
+          groupPath=$(echo "${{ matrix.groupId }}" | tr '.' '/')
+          artifactId=${{ matrix.artifactId }}
+          url="https://repo1.maven.org/maven2/$groupPath/$artifactId/maven-metadata.xml"
 
-          echo "$repos" | jq -c '.[]' | while read repo; do
-            name=$(echo "$repo" | jq -r .name)
-            groupId=$(echo "$repo" | jq -r .groupId)
-            artifactId=$(echo "$repo" | jq -r .artifactId)
-            projectName=$(echo "$repo" | jq -r .projectName)
-            groupPath=$(echo "$groupId" | tr '.' '/')
-            url="https://repo1.maven.org/maven2/$groupPath/$artifactId/maven-metadata.xml"
+          versions=$(curl -s -f "$url" | xmllint --format - 2>/dev/null | \
+            grep '<version>' | sed -E 's/.*<version>([^<]+)<\/version>.*/\1/' | \
+            grep -v SNAPSHOT || echo "")
 
-            echo "Fetching versions for $artifactId"
+          matrix_json=$(echo "$versions" | jq -R -s -c '
+            split("\n") | map(select(length > 0)) |
+            map({
+              name: "${{ matrix.name }}",
+              groupId: "${{ matrix.groupId }}",
+              artifactId: "${{ matrix.artifactId }}",
+              projectName: "${{ matrix.projectName }}",
+              version: .
+            }) | { include: . }')
 
-            versions=$(curl -s -f "$url" | xmllint --format - 2>/dev/null | grep '<version>' | sed -E 's/.*<version>([^<]+)<\/version>.*/\1/' | grep -v SNAPSHOT || echo "")
+          echo "matrix=$matrix_json" >> $GITHUB_OUTPUT
 
-            if [ -z "$versions" ]; then
-              echo "No versions found for $artifactId"
-              continue
-            fi
-
-            versions_json=$(echo "$versions" | jq -R -s -c '
-              split("\n") | map(select(length > 0)) |
-              map({
-                name: "'"$name"'",
-                groupId: "'"$groupId"'",
-                artifactId: "'"$artifactId"'",
-                projectName: "'"$projectName"'",
-                version: .
-              })
-            ')
-
-            jq -s '.[0] + .[1]' matrix.json <(echo "$versions_json") > tmp_matrix.json && mv tmp_matrix.json matrix.json
-          done
-
-          cat matrix.json
-          echo "full_matrix=$(jq -c . matrix.json)" >> $GITHUB_OUTPUT
-        continue-on-error: true
-
-  download-and-upload-sboms:
+  upload-sboms:
     needs: fetch-versions
     runs-on: ubuntu-latest
     strategy:
-      matrix:
-        include: ${{ fromJson(needs.fetch-versions.outputs.full_matrix) }}
+      matrix: ${{ fromJson(needs.fetch-versions.outputs.matrix) }}
       fail-fast: false
-      max-parallel: 90  # Reduced to avoid rate limiting
+      max-parallel: 30
     steps:
-      - name: Create directory for SBOMs
+      - name: Create SBOM directory
         run: mkdir -p sboms
 
-      - name: Download SBOM from Maven Central
+      - name: Download SBOM
         id: download-sbom
         run: |
           GROUP_PATH=$(echo "${{ matrix.groupId }}" | tr '.' '/')
           ARTIFACT_ID=${{ matrix.artifactId }}
           VERSION=${{ matrix.version }}
-
-          echo "Processing $ARTIFACT_ID:$VERSION"
-
           JSON_SBOM_URL="https://repo1.maven.org/maven2/$GROUP_PATH/$ARTIFACT_ID/$VERSION/$ARTIFACT_ID-$VERSION-cyclonedx.json"
           XML_SBOM_URL="https://repo1.maven.org/maven2/$GROUP_PATH/$ARTIFACT_ID/$VERSION/$ARTIFACT_ID-$VERSION-cyclonedx.xml"
+
           JSON_SBOM_FILE="sboms/$ARTIFACT_ID-$VERSION-cyclonedx.json"
           XML_SBOM_FILE="sboms/$ARTIFACT_ID-$VERSION-cyclonedx.xml"
-
-          DOWNLOAD_SUCCESS=false
           SBOM_FILE=""
 
-          for i in {1..3}; do
-            if curl -s -f -o "$JSON_SBOM_FILE" "$JSON_SBOM_URL"; then
-              echo "Downloaded JSON SBOM for $ARTIFACT_ID:$VERSION"
-              DOWNLOAD_SUCCESS=true
-              SBOM_FILE="$JSON_SBOM_FILE"
-              break
-            fi
-            echo "Attempt $i: JSON SBOM not found for $ARTIFACT_ID:$VERSION"
-            sleep 1
-          done
-
-          if [ "$DOWNLOAD_SUCCESS" = false ]; then
-            for i in {1..3}; do
-              if curl -s -f -o "$XML_SBOM_FILE" "$XML_SBOM_URL"; then
-                echo "Downloaded XML SBOM for $ARTIFACT_ID:$VERSION"
-                DOWNLOAD_SUCCESS=true
-                SBOM_FILE="$XML_SBOM_FILE"
-                break
-              fi
-              echo "Attempt $i: XML SBOM not found for $ARTIFACT_ID:$VERSION"
-              sleep 1
-            done
+          if curl -s -f -o "$JSON_SBOM_FILE" "$JSON_SBOM_URL"; then
+            echo "Downloaded JSON SBOM"
+            SBOM_FILE="$JSON_SBOM_FILE"
+            echo "sbom_downloaded=true" >> $GITHUB_OUTPUT
+            echo "sbom_file=$SBOM_FILE" >> $GITHUB_OUTPUT
+          elif curl -s -f -o "$XML_SBOM_FILE" "$XML_SBOM_URL"; then
+            echo "Downloaded XML SBOM"
+            SBOM_FILE="$XML_SBOM_FILE"
+            echo "sbom_downloaded=true" >> $GITHUB_OUTPUT
+            echo "sbom_file=$SBOM_FILE" >> $GITHUB_OUTPUT
+          else
+            echo "No SBOM found"
+            echo "sbom_downloaded=false" >> $GITHUB_OUTPUT
           fi
-
-          if [ "$DOWNLOAD_SUCCESS" = false ]; then
-            echo "No SBOM found for $ARTIFACT_ID:$VERSION"
-          fi
-
-          echo "sbom_file=$SBOM_FILE" >> $GITHUB_OUTPUT
-          echo "sbom_downloaded=$DOWNLOAD_SUCCESS" >> $GITHUB_OUTPUT
         continue-on-error: true
 
       - name: Upload SBOM to DependencyTrack
