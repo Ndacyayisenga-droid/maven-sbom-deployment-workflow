@@ -40,6 +40,8 @@ jobs:
         run: mkdir -p sboms
 
       - name: Fetch versions and download/upload SBOMs
+        env:
+          DEPENDENCYTRACK_API_KEY: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
         run: |
           name="${{ matrix.project.name }}"
           groupId="${{ matrix.project.groupId }}"
@@ -92,15 +94,25 @@ jobs:
             fi
 
             if [ "$DOWNLOAD_SUCCESS" = true ]; then
-              echo "Uploading SBOM $SBOM_FILE"
-              curl -X PUT \
-                -H "X-Api-Key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}" \
-                -F "projectName=$projectName" \
-                -F "projectVersion=$version" \
-                -F "autoCreate=true" \
-                -F "bom=@$SBOM_FILE" \
-                https://api.dependencytrack.open-elements.cloud/api/v1/bom
+              echo "Uploading SBOM using GitHub Action"
+              echo "::set-output name=sbom_file::$SBOM_FILE"
+              echo "::set-output name=version::$version"
+              # Trigger the next step
+              echo "SBOM_FILE=$SBOM_FILE" >> $GITHUB_ENV
+              echo "VERSION=$version" >> $GITHUB_ENV
+              echo "UPLOAD=true" >> $GITHUB_ENV
             else
               echo "No SBOM found for $artifactId:$version"
             fi
           done
+
+      - name: Upload SBOM to DependencyTrack
+        if: env.UPLOAD == 'true'
+        uses: DependencyTrack/gh-upload-sbom@v3
+        with:
+          serverHostname: 'api.dependencytrack.open-elements.cloud'
+          apiKey: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
+          projectName: ${{ matrix.project.projectName }}
+          projectVersion: ${{ env.VERSION }}
+          bomFilename: ${{ env.SBOM_FILE }}
+          autoCreate: true
