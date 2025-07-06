@@ -94,13 +94,23 @@ jobs:
             fi
 
             if [ "$DOWNLOAD_SUCCESS" = true ]; then
-              echo "Uploading SBOM using GitHub Action"
-              echo "::set-output name=sbom_file::$SBOM_FILE"
-              echo "::set-output name=version::$version"
-              # Trigger the next step
+              echo "Uploading SBOM for $artifactId:$version"
               echo "SBOM_FILE=$SBOM_FILE" >> $GITHUB_ENV
               echo "VERSION=$version" >> $GITHUB_ENV
               echo "UPLOAD=true" >> $GITHUB_ENV
+
+              # Run the upload step inline
+              echo "Uploading to Dependency-Track server api.dependencytrack.open-elements.cloud..."
+              /usr/bin/env bash -c "\
+                curl -X POST \
+                -H 'Content-Type: multipart/form-data' \
+                -H 'X-API-Key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}' \
+                -F 'autoCreate=true' \
+                -F 'projectName=${{ matrix.project.projectName }}' \
+                -F 'projectVersion=$version' \
+                -F 'bom=@$SBOM_FILE' \
+                https://api.dependencytrack.open-elements.cloud/api/v1/bom"
+              echo "Finished uploading SBOM for $artifactId:$version"
             else
               echo "No SBOM found for $artifactId:$version"
             fi
