@@ -16,10 +16,10 @@ jobs:
       - name: Checkout this repo
         uses: actions/checkout@v4
 
-      - name: Read release.json and convert to matrix
+      - name: Read repos.json and convert to matrix
         id: set-matrix
         run: |
-          JSON=$(cat release.json | jq -c)
+          JSON=$(cat repos.json | jq -c)
           echo "matrix=$JSON" >> $GITHUB_OUTPUT
 
   build-and-upload-sboms:

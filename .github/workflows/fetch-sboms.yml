@@ -18,10 +18,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Read release.json and split to project list
+      - name: Read repos.json and split to project list
         id: set-matrix
         run: |
-          JSON=$(cat release.json | jq -c '[.[] | {name, groupId, artifactId, projectName}]')
+          JSON=$(cat repos.json | jq -c '[.[] | {name, groupId, artifactId, projectName}]')
           echo "projects=$JSON" >> $GITHUB_OUTPUT
 
   fetch-and-upload-sboms:
