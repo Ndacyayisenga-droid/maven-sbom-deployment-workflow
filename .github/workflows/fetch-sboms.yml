@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [ "main" ]
   schedule:
-    - cron: '0 0 * * *'  # Run daily at midnight UTC
+    - cron: '0 0 * * 0'  # Run weekly on Sunday at 00:00 UTC
   workflow_dispatch:
 
 jobs:
@@ -21,7 +21,7 @@ jobs:
       - name: Read repos.json and split to project list
         id: set-matrix
         run: |
-          JSON=$(cat repos.json | jq -c '[.[] | {name, groupId, artifactId, projectName}]')
+          JSON=$(cat repos.json | jq -c '[.[] | {name, groupId, artifactId}]')
           echo "projects=$JSON" >> $GITHUB_OUTPUT
 
   fetch-and-upload-sboms:
@@ -46,7 +46,6 @@ jobs:
           name="${{ matrix.project.name }}"
           groupId="${{ matrix.project.groupId }}"
           artifactId="${{ matrix.project.artifactId }}"
-          projectName="${{ matrix.project.projectName }}"
 
           groupPath=$(echo "$groupId" | tr '.' '/')
           url="https://repo1.maven.org/maven2/$groupPath/$artifactId/maven-metadata.xml"
@@ -90,7 +89,7 @@ jobs:
                 -H 'Content-Type: multipart/form-data' \
                 -H 'X-API-Key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}' \
                 -F 'autoCreate=true' \
-                -F 'projectName=${{ matrix.project.projectName }}' \
+                -F 'projectName=${{ matrix.project.name }}' \
                 -F 'projectVersion=$version' \
                 -F 'bom=@$SBOM_FILE' \
                 https://api.dependencytrack.open-elements.cloud/api/v1/bom"
