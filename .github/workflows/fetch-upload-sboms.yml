@@ -42,6 +42,7 @@ jobs:
       - name: Fetch versions and download/upload SBOMs
         env:
           DEPENDENCYTRACK_API_KEY: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
+          DEPENDENCYTRACK_API_URL: https://api.dependencytrack.open-elements.cloud/api/v1/bom
         run: |
           name="${{ matrix.project.name }}"
           groupId="${{ matrix.project.groupId }}"
@@ -55,8 +56,8 @@ jobs:
             grep -v SNAPSHOT || echo "")
 
           if [ -z "$versions" ]; then
-            echo "No versions found for $artifactId"
-            exit 0
+            echo "Error: No versions found for $artifactId — possible regex issue or metadata problem"
+            exit 1
           fi
 
           for version in $versions; do
@@ -66,7 +67,7 @@ jobs:
             SBOM_FILE=""
             DOWNLOAD_SUCCESS=false
 
-            for i in {1..3}; do
+            for i in {1..3}; do # 3 retry attempts for curl
               if curl -s -f -o "$JSON_SBOM_FILE" "$JSON_SBOM_URL"; then
                 echo "Downloaded JSON SBOM for $artifactId:$version"
                 SBOM_FILE="$JSON_SBOM_FILE"
@@ -83,7 +84,7 @@ jobs:
               echo "UPLOAD=true" >> $GITHUB_ENV
 
               # Run the upload step inline
-              echo "Uploading to Dependency-Track server api.dependencytrack.open-elements.cloud..."
+              echo "Uploading to Dependency-Track server..."
               /usr/bin/env bash -c "\
                 curl -X POST \
                 -H 'Content-Type: multipart/form-data' \
@@ -92,7 +93,7 @@ jobs:
                 -F 'projectName=${{ matrix.project.name }}' \
                 -F 'projectVersion=$version' \
                 -F 'bom=@$SBOM_FILE' \
-                https://api.dependencytrack.open-elements.cloud/api/v1/bom"
+                $DEPENDENCYTRACK_API_URL"
               echo "Finished uploading SBOM for $artifactId:$version"
             else
               echo "No SBOM found for $artifactId:$version"
