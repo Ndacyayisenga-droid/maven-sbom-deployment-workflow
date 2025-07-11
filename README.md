@@ -1,6 +1,6 @@
 # SBOM Deployment Workflows
 
-This repository includes two GitHub Actions workflows to handle SBOM (Software Bill of Materials) management for multiple Apache Maven-related projects.
+This repository includes two GitHub Actions to handle SBOM (Software Bill of Materials) management for multiple Apache Maven-related projects.
 These workflows automate the process of generating and/or fetching SBOMs and uploading them to DependencyTrack for continuous vulnerability tracking.
 
 ## Workflows

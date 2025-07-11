@@ -42,6 +42,7 @@ jobs:
       - name: Fetch versions and download/upload SBOMs
         env:
           DEPENDENCYTRACK_API_KEY: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
+          DEPENDENCYTRACK_API_URL: https://api.dependencytrack.open-elements.cloud/api/v1/bom
         run: |
           name="${{ matrix.project.name }}"
           groupId="${{ matrix.project.groupId }}"
@@ -83,7 +84,7 @@ jobs:
               echo "UPLOAD=true" >> $GITHUB_ENV
 
               # Run the upload step inline
-              echo "Uploading to Dependency-Track server api.dependencytrack.open-elements.cloud..."
+              echo "Uploading to Dependency-Track server..."
               /usr/bin/env bash -c "\
                 curl -X POST \
                 -H 'Content-Type: multipart/form-data' \
@@ -92,7 +93,7 @@ jobs:
                 -F 'projectName=${{ matrix.project.name }}' \
                 -F 'projectVersion=$version' \
                 -F 'bom=@$SBOM_FILE' \
-                https://api.dependencytrack.open-elements.cloud/api/v1/bom"
+                $DEPENDENCYTRACK_API_URL"
               echo "Finished uploading SBOM for $artifactId:$version"
             else
               echo "No SBOM found for $artifactId:$version"
