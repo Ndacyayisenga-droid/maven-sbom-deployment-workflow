@@ -6,6 +6,8 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  schedule:
+    - cron: '0 0 * * 0'  # Run weekly on Sunday at 00:00 UTC
 
 jobs:
   read-repos:
@@ -50,6 +52,6 @@ jobs:
           serverHostname: 'api.dependencytrack.open-elements.cloud'
           apiKey: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
           projectName: ${{ matrix.name }}
-          projectVersion: 'main'
+          projectVersion: 'SNAPSHOT'
           bomFilename: "${{ matrix.name }}/target/bom.xml"
           autoCreate: true
