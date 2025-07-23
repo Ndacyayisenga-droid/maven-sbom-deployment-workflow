@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [ "main" ]
   schedule:
-    - cron: '0 0 1,15 * *'
+    - cron: '0 0 1,15 * *' # Run on the 1st and 15th of every month at 00:00 UTC
   workflow_dispatch:
 
 jobs:
@@ -34,7 +34,7 @@ jobs:
       max-parallel: 10
     steps:
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq gnupg coreutils
+        run: sudo apt-get update && sudo apt-get install -y jq gnupg
 
       - name: Prepare SBOM directory
         run: mkdir -p sboms
@@ -52,7 +52,8 @@ jobs:
           url="https://repo1.maven.org/maven2/$groupPath/$artifactId/maven-metadata.xml"
 
           echo "Fetching versions for $artifactId"
-          versions=$(curl -s -f "$url" | grep '<version>' | sed -E 's/.*<version>([^<]+)<\/version>.*/\1/' | grep -v SNAPSHOT || echo "")
+          versions=$(curl -s -f "$url" | grep '<version>' | sed -E 's/.*<version>([^<]+)<\/version>.*/\1/' | \
+            grep -v SNAPSHOT || echo "")
 
           if [ -z "$versions" ]; then
             echo "No versions found for $artifactId"
@@ -61,83 +62,76 @@ jobs:
 
           for version in $versions; do
             echo "Processing $artifactId:$version"
-
-            base_url="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version"
+            JSON_SBOM_URL="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version/$artifactId-$version-cyclonedx.json"
             JSON_SBOM_FILE="sboms/$artifactId-$version-cyclonedx.json"
-            SIG_FILE="$JSON_SBOM_FILE.asc"
-            SHA256_FILE="$JSON_SBOM_FILE.sha256"
+            SIG_URL="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version/$artifactId-$version-cyclonedx.json.asc"
+            SIG_FILE="sboms/$artifactId-$version-cyclonedx.json.asc"
+            SBOM_FILE=""
+            DOWNLOAD_SUCCESS=false
 
-            JSON_SBOM_URL="$base_url/$artifactId-$version-cyclonedx.json"
-            SIG_URL="$base_url/$artifactId-$version-cyclonedx.json.asc"
-            SHA256_URL="$base_url/$artifactId-$version-cyclonedx.json.sha256"
+            for i in {1..3}; do
+              if curl -s -f -o "$JSON_SBOM_FILE" "$JSON_SBOM_URL"; then
+                echo "Downloaded JSON SBOM for $artifactId:$version"
+                SBOM_FILE="$JSON_SBOM_FILE"
+                DOWNLOAD_SUCCESS=true
+                break
+              fi
+              sleep 1
+            done
 
-            # Download SBOM
-            if ! curl -s -f -o "$JSON_SBOM_FILE" "$JSON_SBOM_URL"; then
-              echo "⚠️ SBOM not found for $artifactId:$version"
-              continue
-            fi
-            echo "✅ Downloaded SBOM for $artifactId:$version"
+            if [ "$DOWNLOAD_SUCCESS" = true ]; then
+              # Attempt to download and verify signature
+              if curl -s -f -o "$SIG_FILE" "$SIG_URL"; then
+                echo "Downloaded signature for $artifactId:$version"
 
-            # Download Signature
-            if ! curl -s -f -o "$SIG_FILE" "$SIG_URL"; then
-              echo "⚠️ Signature not found for $artifactId:$version"
-              continue
-            fi
-            echo "✅ Downloaded signature"
+                # Extract key ID from signature verification output
+                KEY_ID=$(gpg --dry-run --verify "$SIG_FILE" "$JSON_SBOM_FILE" 2>&1 | grep 'using [A-Z]* key' | awk '{print $NF}' | tail -n1)
 
-            # Download SHA256
-            if ! curl -s -f -o "$SHA256_FILE" "$SHA256_URL"; then
-              echo "⚠️ SHA256 not found for $artifactId:$version"
-              continue
-            fi
-            echo "✅ Downloaded SHA256 file"
+                if [ -n "$KEY_ID" ]; then
+                  echo "Importing public key $KEY_ID from keyserver..."
+                  if ! gpg --list-keys "$KEY_ID" > /dev/null 2>&1; then
+                    gpg --keyserver keyserver.ubuntu.com --recv-keys "$KEY_ID" || {
+                      echo "❌ Failed to import public key $KEY_ID"
+                      continue
+                    }
+                  else
+                    echo "Public key $KEY_ID already present"
+                  fi
+                else
+                  echo "❌ Could not determine key ID from signature"
+                  continue
+                fi
 
-            # Verify Signature
-            KEY_ID=$(gpg --dry-run --verify "$SIG_FILE" "$JSON_SBOM_FILE" 2>&1 | grep 'using [A-Z]* key' | awk '{print $NF}' | tail -n1)
-
-            if [ -z "$KEY_ID" ]; then
-              echo "❌ Could not determine key ID from signature"
-              continue
-            fi
-
-            echo "Importing public key $KEY_ID..."
-            if ! gpg --list-keys "$KEY_ID" > /dev/null 2>&1; then
-              gpg --keyserver keyserver.ubuntu.com --recv-keys "$KEY_ID" || {
-                echo "❌ Failed to import public key $KEY_ID"
+                # Verify signature
+                if gpg --verify "$SIG_FILE" "$JSON_SBOM_FILE"; then
+                  echo "✅ Signature verification passed for $artifactId:$version"
+                else
+                  echo "❌ Signature verification failed for $artifactId:$version"
+                  continue
+                fi
+              else
+                echo "⚠️ No signature found for $artifactId:$version. Skipping upload."
                 continue
-              }
+              fi
+
+              echo "Uploading SBOM for $artifactId:$version"
+              echo "SBOM_FILE=$SBOM_FILE" >> $GITHUB_ENV
+              echo "VERSION=$version" >> $GITHUB_ENV
+              echo "UPLOAD=true" >> $GITHUB_ENV
+
+              # Run the upload step inline
+              echo "Uploading to Dependency-Track server..."
+              /usr/bin/env bash -c "\
+                curl -X POST \
+                -H 'Content-Type: multipart/form-data' \
+                -H 'X-API-Key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}' \
+                -F 'autoCreate=true' \
+                -F 'projectName=${{ matrix.project.name }}' \
+                -F 'projectVersion=$version' \
+                -F 'bom=@$SBOM_FILE' \
+                $DEPENDENCYTRACK_API_URL"
+              echo "Finished uploading SBOM for $artifactId:$version"
             else
-              echo "Public key $KEY_ID already present"
+              echo "No SBOM found for $artifactId:$version"
             fi
-
-            if ! gpg --verify "$SIG_FILE" "$JSON_SBOM_FILE"; then
-              echo "❌ Signature verification failed for $artifactId:$version"
-              continue
-            fi
-            echo "✅ Signature verification passed"
-
-            # Verify SHA256
-            EXPECTED_HASH=$(cat "$SHA256_FILE" | awk '{print $1}')
-            ACTUAL_HASH=$(sha256sum "$JSON_SBOM_FILE" | awk '{print $1}')
-
-            if [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
-              echo "❌ SHA256 hash mismatch for $artifactId:$version"
-              echo "Expected: $EXPECTED_HASH"
-              echo "Actual  : $ACTUAL_HASH"
-              continue
-            fi
-            echo "✅ SHA256 hash verified"
-
-            # Upload SBOM
-            echo "📤 Uploading SBOM to Dependency-Track..."
-            curl -X POST \
-              -H 'Content-Type: multipart/form-data' \
-              -H 'X-API-Key: ${{ secrets.DEPENDENCYTRACK_API_KEY }}' \
-              -F 'autoCreate=true' \
-              -F 'projectName=${{ matrix.project.name }}' \
-              -F "projectVersion=$version" \
-              -F "bom=@$JSON_SBOM_FILE" \
-              $DEPENDENCYTRACK_API_URL
-
-            echo "✅ Finished uploading SBOM for $artifactId:$version"
           done
