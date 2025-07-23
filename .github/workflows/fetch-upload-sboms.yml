@@ -84,6 +84,24 @@ jobs:
               if curl -s -f -o "$SIG_FILE" "$SIG_URL"; then
                 echo "Downloaded signature for $artifactId:$version"
 
+                # Extract and import key if missing
+                KEY_ID=$(gpg --show-keys --with-colons "$SIG_FILE" 2>/dev/null | grep '^sig' | cut -d: -f5 | head -n1)
+                if [ -n "$KEY_ID" ]; then
+                  echo "Importing public key $KEY_ID from keyserver..."
+                  if ! gpg --list-keys "$KEY_ID" > /dev/null 2>&1; then
+                    gpg --keyserver keyserver.ubuntu.com --recv-keys "$KEY_ID" || {
+                      echo "❌ Failed to import public key $KEY_ID"
+                      continue
+                    }
+                  else
+                    echo "Public key $KEY_ID already present"
+                  fi
+                else
+                  echo "❌ Could not determine key ID from signature"
+                  continue
+                fi
+
+                # Verify signature
                 if gpg --verify "$SIG_FILE" "$JSON_SBOM_FILE"; then
                   echo "✅ Signature verification passed for $artifactId:$version"
                 else
