@@ -84,8 +84,9 @@ jobs:
               if curl -s -f -o "$SIG_FILE" "$SIG_URL"; then
                 echo "Downloaded signature for $artifactId:$version"
 
-                # Extract and import key if missing
-                KEY_ID=$(gpg --show-keys --with-colons "$SIG_FILE" 2>/dev/null | grep '^sig' | cut -d: -f5 | head -n1)
+                # Extract key ID from signature verification output
+                KEY_ID=$(gpg --dry-run --verify "$SIG_FILE" "$JSON_SBOM_FILE" 2>&1 | grep 'using [A-Z]* key' | awk '{print $NF}' | tail -n1)
+
                 if [ -n "$KEY_ID" ]; then
                   echo "Importing public key $KEY_ID from keyserver..."
                   if ! gpg --list-keys "$KEY_ID" > /dev/null 2>&1; then
