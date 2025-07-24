@@ -33,7 +33,7 @@ jobs:
       fail-fast: false
     steps:
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq sha256sum
+        run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Prepare SBOM directory
         run: mkdir -p sboms
