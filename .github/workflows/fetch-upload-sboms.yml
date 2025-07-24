@@ -24,8 +24,66 @@ jobs:
           JSON=$(cat repos.json | jq -c '[.[] | {name, groupId, artifactId}]')
           echo "projects=$JSON" >> $GITHUB_OUTPUT
 
-  fetch-and-upload-sboms:
+  verify-sbom-hashes:
     needs: read-repos
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project: ${{ fromJson(needs.read-repos.outputs.projects) }}
+      fail-fast: false
+    steps:
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq sha256sum
+
+      - name: Prepare SBOM directory
+        run: mkdir -p sboms
+
+      - name: Download and Verify SBOM Hashes
+        run: |
+          groupId="${{ matrix.project.groupId }}"
+          artifactId="${{ matrix.project.artifactId }}"
+          groupPath=$(echo "$groupId" | tr '.' '/')
+          url="https://repo1.maven.org/maven2/$groupPath/$artifactId/maven-metadata.xml"
+
+          echo "Fetching versions for $artifactId"
+          versions=$(curl -s -f "$url" | grep '<version>' | sed -E 's/.*<version>([^<]+)<\/version>.*/\1/' | \
+            grep -v SNAPSHOT || echo "")
+
+          if [ -z "$versions" ]; then
+            echo "No versions found for $artifactId"
+            exit 0
+          fi
+
+          for version in $versions; do
+            echo "Verifying hash for $artifactId:$version"
+            SBOM_FILE="sboms/$artifactId-$version-cyclonedx.json"
+            HASH_FILE="sboms/$artifactId-$version-cyclonedx.json.sha256"
+            SBOM_URL="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version/$artifactId-$version-cyclonedx.json"
+            HASH_URL="$SBOM_URL.sha256"
+
+            curl -s -f -o "$SBOM_FILE" "$SBOM_URL" || {
+              echo "Failed to download SBOM"
+              continue
+            }
+
+            curl -s -f -o "$HASH_FILE" "$HASH_URL" || {
+              echo "Hash file not found for $artifactId:$version. Skipping verification."
+              continue
+            }
+
+            expected_hash=$(cat "$HASH_FILE" | tr -d '[:space:]')
+            actual_hash=$(sha256sum "$SBOM_FILE" | awk '{print $1}')
+
+            if [ "$expected_hash" != "$actual_hash" ]; then
+              echo "❌ Hash mismatch for $artifactId:$version"
+              exit 1
+            else
+              echo "✅ Hash verified for $artifactId:$version"
+            fi
+          done
+
+  fetch-and-upload-sboms:
+    needs: [read-repos, verify-sbom-hashes]
     runs-on: ubuntu-latest
     strategy:
       matrix:
