@@ -84,12 +84,16 @@ jobs:
               if curl -s -f -o "$SIG_FILE" "$SIG_URL"; then
                 echo "Downloaded signature for $artifactId:$version"
 
-                # Extract key ID from signature verification output
+                # Extract key ID from the GPG verification output
+                # This uses --dry-run to avoid importing keys or writing changes
                 KEY_ID=$(gpg --dry-run --verify "$SIG_FILE" "$JSON_SBOM_FILE" 2>&1 | grep 'using [A-Z]* key' | awk '{print $NF}' | tail -n1)
 
                 if [ -n "$KEY_ID" ]; then
                   echo "Importing public key $KEY_ID from keyserver..."
+
+                  # Check if the public key is already present
                   if ! gpg --list-keys "$KEY_ID" > /dev/null 2>&1; then
+                    # If not present, fetch it from the Ubuntu keyserver
                     gpg --keyserver keyserver.ubuntu.com --recv-keys "$KEY_ID" || {
                       echo "Failed to import public key $KEY_ID"
                       continue
@@ -102,7 +106,7 @@ jobs:
                   continue
                 fi
 
-                # Verify signature
+                # Perform the actual GPG signature verification
                 if gpg --verify "$SIG_FILE" "$JSON_SBOM_FILE"; then
                   echo "✅ Signature verification passed for $artifactId:$version"
                 else
@@ -110,6 +114,7 @@ jobs:
                   continue
                 fi
               else
+                # Skip the upload if no signature was found
                 echo "No signature found for $artifactId:$version. Skipping upload."
                 continue
               fi
