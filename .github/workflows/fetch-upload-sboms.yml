@@ -24,66 +24,8 @@ jobs:
           JSON=$(cat repos.json | jq -c '[.[] | {name, groupId, artifactId}]')
           echo "projects=$JSON" >> $GITHUB_OUTPUT
 
-  verify-sbom-hashes:
-    needs: read-repos
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        project: ${{ fromJson(needs.read-repos.outputs.projects) }}
-      fail-fast: false
-    steps:
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Prepare SBOM directory
-        run: mkdir -p sboms
-
-      - name: Download and Verify SBOM Hashes
-        run: |
-          groupId="${{ matrix.project.groupId }}"
-          artifactId="${{ matrix.project.artifactId }}"
-          groupPath=$(echo "$groupId" | tr '.' '/')
-          url="https://repo1.maven.org/maven2/$groupPath/$artifactId/maven-metadata.xml"
-
-          echo "Fetching versions for $artifactId"
-          versions=$(curl -s -f "$url" | grep '<version>' | sed -E 's/.*<version>([^<]+)<\/version>.*/\1/' | \
-            grep -v SNAPSHOT || echo "")
-
-          if [ -z "$versions" ]; then
-            echo "No versions found for $artifactId"
-            exit 0
-          fi
-
-          for version in $versions; do
-            echo "Verifying hash for $artifactId:$version"
-            SBOM_FILE="sboms/$artifactId-$version-cyclonedx.json"
-            HASH_FILE="sboms/$artifactId-$version-cyclonedx.json.sha256"
-            SBOM_URL="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version/$artifactId-$version-cyclonedx.json"
-            HASH_URL="$SBOM_URL.sha256"
-
-            curl -s -f -o "$SBOM_FILE" "$SBOM_URL" || {
-              echo "Failed to download SBOM"
-              continue
-            }
-
-            curl -s -f -o "$HASH_FILE" "$HASH_URL" || {
-              echo "Hash file not found for $artifactId:$version. Skipping verification."
-              continue
-            }
-
-            expected_hash=$(cat "$HASH_FILE" | tr -d '[:space:]')
-            actual_hash=$(sha256sum "$SBOM_FILE" | awk '{print $1}')
-
-            if [ "$expected_hash" != "$actual_hash" ]; then
-              echo "❌ Hash mismatch for $artifactId:$version"
-              exit 1
-            else
-              echo "✅ Hash verified for $artifactId:$version"
-            fi
-          done
-
   fetch-and-upload-sboms:
-    needs: [read-repos, verify-sbom-hashes]
+    needs: read-repos
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -92,7 +34,7 @@ jobs:
       max-parallel: 10
     steps:
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq
+        run: sudo apt-get update && sudo apt-get install -y jq gnupg
 
       - name: Prepare SBOM directory
         run: mkdir -p sboms
@@ -122,6 +64,10 @@ jobs:
             echo "Processing $artifactId:$version"
             JSON_SBOM_URL="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version/$artifactId-$version-cyclonedx.json"
             JSON_SBOM_FILE="sboms/$artifactId-$version-cyclonedx.json"
+            SHA256_URL="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version/$artifactId-$version-cyclonedx.json.sha256"
+            SHA256_FILE="sboms/$artifactId-$version-cyclonedx.json.sha256"
+            SIG_URL="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version/$artifactId-$version-cyclonedx.json.asc"
+            SIG_FILE="sboms/$artifactId-$version-cyclonedx.json.asc"
             SBOM_FILE=""
             DOWNLOAD_SUCCESS=false
 
@@ -136,6 +82,66 @@ jobs:
             done
 
             if [ "$DOWNLOAD_SUCCESS" = true ]; then
+              # Attempt to download the SHA256 hash file
+              if curl -s -f -o "$SHA256_FILE" "$SHA256_URL"; then
+                echo "Downloaded SHA256 file for $artifactId:$version"
+
+                # Read expected hash
+                EXPECTED_HASH=$(cat "$SHA256_FILE" | awk '{print $1}')
+                # Compute actual hash
+                ACTUAL_HASH=$(sha256sum "$JSON_SBOM_FILE" | awk '{print $1}')
+
+                if [ "$EXPECTED_HASH" = "$ACTUAL_HASH" ]; then
+                  echo "✅ SHA256 hash verification passed for $artifactId:$version"
+                else
+                  echo "❌ SHA256 hash mismatch for $artifactId:$version"
+                  echo "Expected: $EXPECTED_HASH"
+                  echo "Actual:   $ACTUAL_HASH"
+                  continue
+                fi
+              else
+                echo "⚠️ No SHA256 file found for $artifactId:$version. Skipping hash verification."
+              fi
+
+              # Attempt to download and verify signature
+              if curl -s -f -o "$SIG_FILE" "$SIG_URL"; then
+                echo "Downloaded signature for $artifactId:$version"
+
+                # Extract key ID from the GPG verification output
+                # This uses --dry-run to avoid importing keys or writing changes
+                KEY_ID=$(gpg --dry-run --verify "$SIG_FILE" "$JSON_SBOM_FILE" 2>&1 | grep 'using [A-Z]* key' | awk '{print $NF}' | tail -n1)
+
+                if [ -n "$KEY_ID" ]; then
+                  echo "Importing public key $KEY_ID from keyserver..."
+
+                  # Check if the public key is already present
+                  if ! gpg --list-keys "$KEY_ID" > /dev/null 2>&1; then
+                    # If not present, fetch it from the Ubuntu keyserver
+                    gpg --keyserver keyserver.ubuntu.com --recv-keys "$KEY_ID" || {
+                      echo "Failed to import public key $KEY_ID"
+                      continue
+                    }
+                  else
+                    echo "Public key $KEY_ID already present"
+                  fi
+                else
+                  echo "Could not determine key ID from signature"
+                  continue
+                fi
+
+                # Perform the actual GPG signature verification
+                if gpg --verify "$SIG_FILE" "$JSON_SBOM_FILE"; then
+                  echo "✅ Signature verification passed for $artifactId:$version"
+                else
+                  echo "Signature verification failed for $artifactId:$version"
+                  continue
+                fi
+              else
+                # Skip the upload if no signature was found
+                echo "No signature found for $artifactId:$version. Skipping upload."
+                continue
+              fi
+
               echo "Uploading SBOM for $artifactId:$version"
               echo "SBOM_FILE=$SBOM_FILE" >> $GITHUB_ENV
               echo "VERSION=$version" >> $GITHUB_ENV
