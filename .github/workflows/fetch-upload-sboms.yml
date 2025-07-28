@@ -64,8 +64,8 @@ jobs:
             echo "Processing $artifactId:$version"
             JSON_SBOM_URL="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version/$artifactId-$version-cyclonedx.json"
             JSON_SBOM_FILE="sboms/$artifactId-$version-cyclonedx.json"
-            SHA256_URL="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version/$artifactId-$version-cyclonedx.json.sha256"
-            SHA256_FILE="sboms/$artifactId-$version-cyclonedx.json.sha256"
+            SHA1_URL="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version/$artifactId-$version-cyclonedx.json.sha1"
+            SHA1_FILE="sboms/$artifactId-$version-cyclonedx.json.sha1"
             SIG_URL="https://repo1.maven.org/maven2/$groupPath/$artifactId/$version/$artifactId-$version-cyclonedx.json.asc"
             SIG_FILE="sboms/$artifactId-$version-cyclonedx.json.asc"
             SBOM_FILE=""
@@ -82,25 +82,25 @@ jobs:
             done
 
             if [ "$DOWNLOAD_SUCCESS" = true ]; then
-              # Attempt to download the SHA256 hash file
-              if curl -s -f -o "$SHA256_FILE" "$SHA256_URL"; then
-                echo "Downloaded SHA256 file for $artifactId:$version"
+              # Attempt to download the SHA-1 hash file
+              if curl -s -f -o "$SHA1_FILE" "$SHA1_URL"; then
+                echo "Downloaded SHA1 file for $artifactId:$version"
 
-                # Read expected hash
-                EXPECTED_HASH=$(cat "$SHA256_FILE" | awk '{print $1}')
-                # Compute actual hash
-                ACTUAL_HASH=$(sha256sum "$JSON_SBOM_FILE" | awk '{print $1}')
+                # Read expected SHA-1 hash
+                EXPECTED_HASH=$(cat "$SHA1_FILE" | tr -d '[:space:]')
+                # Compute actual SHA-1 hash
+                ACTUAL_HASH=$(sha1sum "$JSON_SBOM_FILE" | awk '{print $1}')
 
                 if [ "$EXPECTED_HASH" = "$ACTUAL_HASH" ]; then
-                  echo "✅ SHA256 hash verification passed for $artifactId:$version"
+                  echo "✅ SHA1 hash verification passed for $artifactId:$version"
                 else
-                  echo "❌ SHA256 hash mismatch for $artifactId:$version"
+                  echo "❌ SHA1 hash mismatch for $artifactId:$version"
                   echo "Expected: $EXPECTED_HASH"
                   echo "Actual:   $ACTUAL_HASH"
                   continue
                 fi
               else
-                echo "⚠️ No SHA256 file found for $artifactId:$version. Skipping hash verification."
+                echo "⚠️ No SHA1 file found for $artifactId:$version. Skipping hash verification."
               fi
 
               # Attempt to download and verify signature
