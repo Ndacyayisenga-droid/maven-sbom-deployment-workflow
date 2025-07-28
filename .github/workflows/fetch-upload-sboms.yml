@@ -94,13 +94,13 @@ jobs:
                 if [ "$EXPECTED_HASH" = "$ACTUAL_HASH" ]; then
                   echo "✅ SHA1 hash verification passed for $artifactId:$version"
                 else
-                  echo "❌ SHA1 hash mismatch for $artifactId:$version"
+                  echo "SHA1 hash mismatch for $artifactId:$version"
                   echo "Expected: $EXPECTED_HASH"
                   echo "Actual:   $ACTUAL_HASH"
                   continue
                 fi
               else
-                echo "⚠️ No SHA1 file found for $artifactId:$version. Skipping hash verification."
+                echo "No SHA1 file found for $artifactId:$version. Skipping hash verification."
               fi
 
               # Attempt to download and verify signature
